@@ -10,7 +10,7 @@ import (
 
 // chFile
 // обработчик для Post "/api/task/done"
-func DoneTaskHandler(datab cases.Datab) http.HandlerFunc {
+func doneTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id := req.URL.Query().Get("id")
 		err := datab.DoneTask(id)

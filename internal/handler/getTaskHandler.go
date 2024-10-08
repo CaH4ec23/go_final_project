@@ -11,7 +11,7 @@ import (
 
 // chFile
 // обработчик GET для "/api/task"
-func GetTaskHandler(datab cases.Datab) http.HandlerFunc {
+func getTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var task cases.Task
 		id := req.URL.Query().Get("id")
