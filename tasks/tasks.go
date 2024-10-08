@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"log"
+	"os"
+	"path/filepath"
 	"time"
 )
 
 const (
 	LimitTasks = 30
+	DateFormat = "20060102"
 )
 
 type Task struct {
@@ -23,13 +28,69 @@ type Datab struct {
 	db *sql.DB
 }
 
+// Создаем базу данных
+func CreatDb() *sql.DB {
+
+	appPath, err := os.Executable()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbFile := filepath.Join(filepath.Dir(appPath), "scheduler.db")
+	_, err = os.Stat(dbFile)
+	// путь к файлу базы данных через переменную окружения.
+	envFile := os.Getenv("TODO_DBFILE")
+	if len(envFile) > 0 {
+		dbFile = envFile
+	}
+	log.Println("Путь к базе данных", dbFile)
+
+	var install bool
+	if err != nil {
+		install = true
+	}
+	// если install равен true, после открытия БД требуется выполнить
+	// sql-запрос с CREATE TABLE и CREATE INDEX
+	db, err := sql.Open("sqlite", "scheduler.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer db.Close()
+
+	if install {
+		Table := `CREATE TABLE IF NOT EXISTS scheduler (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				date CHAR(8) NOT NULL,
+				title TEXT NOT NULL,
+				comment TEXT, 
+				repeat VARCHAR(128) NOT NULL
+				);`
+		_, err = db.Exec(Table)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		Index := `CREATE INDEX IF NOT EXISTS scheduler_date ON scheduler(date);`
+		_, err = db.Exec(Index)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Println("База данных создана")
+	}
+	return db
+}
+
+func NewDatab(db *sql.DB) Datab {
+	return Datab{db: db}
+}
+
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 
 	if repeat == "" {
 		return "", fmt.Errorf("не указана строка")
 	}
 
-	nowDate, err := time.Parse("20060102", date)
+	nowDate, err := time.Parse(DateFormat, date)
 
 	if err != nil {
 		return "", fmt.Errorf("неверный формат даты: %v", err)
@@ -52,77 +113,78 @@ func NextDate(now time.Time, date string, repeat string) (string, error) {
 		for newDate.Before(now) {
 			newDate = newDate.AddDate(0, 0, moreDays)
 		}
-		return newDate.Format("20060102"), nil
+		return newDate.Format(DateFormat), nil
 
 	case "y":
 		newDate := nowDate.AddDate(1, 0, 0)
 		for newDate.Before(now) {
 			newDate = newDate.AddDate(1, 0, 0)
 		}
-		return newDate.Format("20060102"), nil
+		return newDate.Format(DateFormat), nil
 
 	default:
 		return "", fmt.Errorf("неверный ввод")
 
 	}
 }
+
 func (d *Datab) AddTask(task Task) (string, error) {
 	var err error
-
 	if task.Date == "" {
-		task.Date = time.Now().Format("20060102")
-	}
-	if task.Title == "" {
-		return "", fmt.Errorf("не указан заголовок задачи")
+		task.Date = time.Now().Format(DateFormat)
 	}
 
-	_, err = time.Parse("20060102", task.Date)
+	_, err = time.Parse(DateFormat, task.Date)
 	if err != nil {
-		return "", fmt.Errorf("неверный формат даты")
+		return "", fmt.Errorf(`{"error":"Неверный формат даты"}`)
 	}
 	// Если дата меньше time.Now, то устанавливаем NextDate
-	if task.Date < time.Now().Format("20060102") {
+	if task.Date < time.Now().Format(DateFormat) {
 		if task.Repeat != "" {
 			nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-				return "", fmt.Errorf("некорректное правило повторения")
+				return "", fmt.Errorf(`{"error":"Неверное правило повторения"}`)
 			}
 			task.Date = nextDate
 		} else {
-			task.Date = time.Now().Format("20060102")
+			task.Date = time.Now().Format(DateFormat)
 		}
+	}
+	if task.Title == "" {
+		return "", fmt.Errorf(`{"error":"Не указан заголовок задачи"}`)
 	}
 
 	// Добавляем задачу в базу данных
 	query := `INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)`
 	res, err := d.db.Exec(query, task.Date, task.Title, task.Comment, task.Repeat)
 	if err != nil {
-		return "", fmt.Errorf("задача не добавлена")
+		return "", fmt.Errorf(`{"error":"Задача не добавлена"}`)
 	}
+
 	//  Идентификатор созданной задачи
 	id, err := res.LastInsertId()
 	if err != nil {
 		return "", fmt.Errorf("id созданной задачи не удалось вернуть")
 	}
-	return fmt.Sprintf("%d", id), err
+	return fmt.Sprintf("%d", id), nil
 }
 
 // Получаем список ближайших задач
-func (d *Datab) GetTasks(search string) ([]Task, error) {
+func (d *Datab) GetTasks() ([]Task, error) {
 	var task Task
 	var tasks []Task
-	var row *sql.Rows
+	var rows *sql.Rows
 	var err error
-	row, err = d.db.Query(`SELECT * FROM scheduler ORDER BY date ASC LIMIT :limit`, sql.Named("limit", LimitTasks))
+	rows, err = d.db.Query(`SELECT * FROM scheduler ORDER BY date ASC LIMIT :limit`, sql.Named("limit", LimitTasks))
 
 	if err != nil {
-		return []Task{}, fmt.Errorf("ошибка запроса")
+		return []Task{}, fmt.Errorf(`{"error":"Ошибка запроса"}`)
 	}
-	defer row.Close()
-	for row.Next() {
-		err := row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
-		if err = row.Err(); err != nil {
-			return []Task{}, fmt.Errorf("ошибка распознавания данных")
+	defer rows.Close()
+	for rows.Next() {
+
+		if err = rows.Err(); err != nil {
+			return []Task{}, fmt.Errorf(`{"error":"Ошибка распознавания данных"}`)
 		}
 		tasks = append(tasks, task)
 	}
@@ -154,15 +216,15 @@ func (d *Datab) UpdateTask(task Task) error {
 		return fmt.Errorf("не указан идентификатор")
 	}
 	if task.Date == "" {
-		task.Date = time.Now().Format("20060102")
+		task.Date = time.Now().Format(DateFormat)
 	}
 
-	_, err := time.Parse("20060102", task.Date)
+	_, err := time.Parse(DateFormat, task.Date)
 	if err != nil {
 		return fmt.Errorf("неверный формат даты")
 	}
 	// Если дата меньше time.Now, то устанавливаем NextDate
-	if task.Date < time.Now().Format("20060102") {
+	if task.Date < time.Now().Format(DateFormat) {
 		if task.Repeat != "" {
 			nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
@@ -171,7 +233,7 @@ func (d *Datab) UpdateTask(task Task) error {
 			}
 			task.Date = nextDate
 		} else {
-			task.Date = time.Now().Format("20060102")
+			task.Date = time.Now().Format(DateFormat)
 		}
 	}
 
@@ -237,6 +299,7 @@ func (d *Datab) DeleteTask(id string) error {
 	if id == "" {
 		return fmt.Errorf("не указан id")
 	}
+
 	query := "DELETE FROM scheduler WHERE id = ?"
 	res, err := d.db.Exec(query, id)
 	if err != nil {
@@ -245,10 +308,9 @@ func (d *Datab) DeleteTask(id string) error {
 
 	rowsAffected, err := res.RowsAffected() // определяем измененные строки
 	if err != nil {
-
 		return fmt.Errorf("не удалось посчитать измененные строки")
-	}
 
+	}
 	if rowsAffected == 0 {
 
 		return fmt.Errorf("задача с таким id не найдена")

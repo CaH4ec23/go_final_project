@@ -3,21 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	cases "go_final_project/tasks"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
-)
 
-type Task struct {
-	ID      string `json:"id"`
-	Date    string `json:"date"`
-	Title   string `json:"title"`
-	Comment string `json:"comment"`
-	Repeat  string `json:"repeat"`
-}
+	"net/http"
+	"time"
+
+	cases "go_final_project/tasks"
+)
 
 type Reply struct {
 	ID    string `json:"id,omitempty"`
@@ -28,62 +19,18 @@ var ErrorResponses struct {
 	Error string `json:"error,omitempty"`
 }
 
-func NextDate(now time.Time, date string, repeat string) (string, error) {
-
-	if repeat == "" {
-		return "", fmt.Errorf("не указана строка")
-	}
-
-	nowDate, err := time.Parse("20060102", date)
-
-	if err != nil {
-		return "", fmt.Errorf("неверный формат даты: %v", err)
-	}
-
-	parts := strings.Split(repeat, " ")
-
-	editParts := parts[0]
-
-	switch editParts {
-	case "d":
-		if len(parts) < 2 {
-			return "", fmt.Errorf("не указано количество дней")
-		}
-		moreDays, err := strconv.Atoi(parts[1])
-		if err != nil || moreDays < 1 || moreDays > 400 {
-			return "", fmt.Errorf("превышен максимально допустимый интервал дней")
-		}
-		newDate := nowDate.AddDate(0, 0, moreDays)
-		for newDate.Before(now) {
-			newDate = newDate.AddDate(0, 0, moreDays)
-		}
-		return newDate.Format("20060102"), nil
-
-	case "y":
-		newDate := nowDate.AddDate(1, 0, 0)
-		for newDate.Before(now) {
-			newDate = newDate.AddDate(1, 0, 0)
-		}
-		return newDate.Format("20060102"), nil
-
-	default:
-		return "", fmt.Errorf("неверный ввод")
-
-	}
-}
-
 // обработчик "/api/nextdate"
 func NextDateHandler(w http.ResponseWriter, req *http.Request) {
 	now := req.FormValue("now")
 	date := req.FormValue("date")
 	repeat := req.FormValue("repeat")
 
-	nowTime, err := time.Parse("20060102", now)
+	nowTime, err := time.Parse(cases.DateFormat, now)
 	if err != nil {
 		http.Error(w, "неверный формат даты", http.StatusBadRequest)
 		return
 	}
-	nextDate, err := NextDate(nowTime, date, repeat)
+	nextDate, err := cases.NextDate(nowTime, date, repeat)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -94,10 +41,10 @@ func NextDateHandler(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(nextDate))
 }
 
-// обработчик POST "/api/task"
+// обработчик POST "POST /api/task"
 func PostTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		var task Task
+		var task cases.Task
 		err := json.NewDecoder(req.Body).Decode(&task)
 		if err != nil {
 			http.Error(w, "ошибка десериализации JSON", http.StatusBadRequest)
@@ -119,7 +66,7 @@ func PostTaskHandler(datab cases.Datab) http.HandlerFunc {
 	}
 }
 
-// обработчик GET для "/api/task"
+// обработчик GET для "GET /api/task"
 func GetTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var task cases.Task
@@ -144,15 +91,13 @@ func GetTaskHandler(datab cases.Datab) http.HandlerFunc {
 func GetTasksHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 
-		SearchParameters := req.URL.Query().Get("search")
-		tasks, err := datab.GetTasks(SearchParameters)
+		tasks, err := datab.GetTasks()
+
 		if err != nil {
-			if err != nil {
-				err := errors.New("ошибка запроса к базе данных")
-				ErrorResponses.Error = err.Error()
-				json.NewEncoder(w).Encode(ErrorResponses)
-				return
-			}
+			err := errors.New("ошибка запроса к базе данных")
+			ErrorResponses.Error = err.Error()
+			json.NewEncoder(w).Encode(ErrorResponses)
+			return
 		}
 
 		reply := map[string][]cases.Task{
@@ -166,10 +111,10 @@ func GetTasksHandler(datab cases.Datab) http.HandlerFunc {
 	}
 }
 
-// обработчик PUT для "/api/task"
+// обработчик PUT для "PUT /api/task"
 func PutTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		var task Task
+		var task cases.Task
 		err := json.NewDecoder(req.Body).Decode(&task)
 		if err != nil {
 			http.Error(w, "ошибка десериализации JSON", http.StatusBadRequest)
@@ -205,7 +150,7 @@ func DoneTaskHandler(datab cases.Datab) http.HandlerFunc {
 	}
 }
 
-// обработчик DELETE для "/api/task"
+// обработчик DELETE для "DELETE /api/task"
 func DeleteTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id := req.URL.Query().Get("id")
@@ -221,5 +166,21 @@ func DeleteTaskHandler(datab cases.Datab) http.HandlerFunc {
 			http.Error(w, "ошибка кодирования JSON", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+// эндпоинт
+func TaskHandler(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		GetTaskHandler(cases.Datab{})
+	case http.MethodPost:
+		PostTaskHandler(cases.Datab{})
+	case http.MethodPut:
+		PutTaskHandler(cases.Datab{})
+	case http.MethodDelete:
+		DeleteTaskHandler(cases.Datab{})
+	default:
+		http.Error(w, "Метод не поддерживается", http.StatusMethodNotAllowed)
 	}
 }
