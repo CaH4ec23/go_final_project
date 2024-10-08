@@ -3,12 +3,11 @@ package cases
 import (
 	"database/sql"
 	"fmt"
-	"strconv"
-	"strings"
-
-	"log"
+	"go_final_project/internal/nextdate"
 	"os"
 	"path/filepath"
+
+	"log"
 	"time"
 )
 
@@ -27,6 +26,14 @@ type Task struct {
 type Datab struct {
 	db *sql.DB
 }
+type Rule struct {
+	ID    string `json:"id,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+var ErrorResponses struct {
+	Error string `json:"error,omitempty"`
+}
 
 // Создаем базу данных
 func CreatDb() *sql.DB {
@@ -36,13 +43,12 @@ func CreatDb() *sql.DB {
 		log.Fatal(err)
 	}
 	dbFile := filepath.Join(filepath.Dir(appPath), "scheduler.db")
-	_, err = os.Stat(dbFile)
-	// путь к файлу базы данных через переменную окружения.
+
 	envFile := os.Getenv("TODO_DBFILE")
 	if len(envFile) > 0 {
 		dbFile = envFile
 	}
-	log.Println("Путь к базе данных", dbFile)
+	_, err = os.Stat(dbFile)
 
 	var install bool
 	if err != nil {
@@ -55,14 +61,12 @@ func CreatDb() *sql.DB {
 		log.Fatal(err)
 	}
 
-	defer db.Close()
-
 	if install {
 		Table := `CREATE TABLE IF NOT EXISTS scheduler (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				date CHAR(8) NOT NULL,
 				title TEXT NOT NULL,
-				comment TEXT DEFAULT "", 
+				comment TEXT,
 				repeat VARCHAR(128) NOT NULL
 				);`
 		_, err = db.Exec(Table)
@@ -79,53 +83,8 @@ func CreatDb() *sql.DB {
 	}
 	return db
 }
-
 func NewDatab(db *sql.DB) Datab {
 	return Datab{db: db}
-}
-
-func NextDate(now time.Time, date string, repeat string) (string, error) {
-
-	if repeat == "" {
-		return "", fmt.Errorf("не указана строка")
-	}
-
-	nowDate, err := time.Parse(DateFormat, date)
-
-	if err != nil {
-		return "", fmt.Errorf("неверный формат даты: %v", err)
-	}
-
-	parts := strings.Split(repeat, " ")
-
-	editParts := parts[0]
-
-	switch editParts {
-	case "d":
-		if len(parts) < 2 {
-			return "", fmt.Errorf("не указано количество дней")
-		}
-		moreDays, err := strconv.Atoi(parts[1])
-		if err != nil || moreDays < 1 || moreDays > 400 {
-			return "", fmt.Errorf("превышен максимально допустимый интервал дней")
-		}
-		newDate := nowDate.AddDate(0, 0, moreDays)
-		for newDate.Before(now) {
-			newDate = newDate.AddDate(0, 0, moreDays)
-		}
-		return newDate.Format(DateFormat), nil
-
-	case "y":
-		newDate := nowDate.AddDate(1, 0, 0)
-		for newDate.Before(now) {
-			newDate = newDate.AddDate(1, 0, 0)
-		}
-		return newDate.Format(DateFormat), nil
-
-	default:
-		return "", fmt.Errorf("неверный ввод")
-
-	}
 }
 
 func (d *Datab) AddTask(task Task) (string, error) {
@@ -136,14 +95,14 @@ func (d *Datab) AddTask(task Task) (string, error) {
 
 	_, err = time.Parse(DateFormat, task.Date)
 	if err != nil {
-		return "", fmt.Errorf(`{"error":"Неверный формат даты"}`)
+		return "", fmt.Errorf("неверный формат даты")
 	}
 	// Если дата меньше time.Now, то устанавливаем NextDate
 	if task.Date < time.Now().Format(DateFormat) {
 		if task.Repeat != "" {
-			nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
+			nextDate, err := nextdate.NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-				return "", fmt.Errorf(`{"error":"Неверное правило повторения"}`)
+				return "", fmt.Errorf("неверное правило повторения")
 			}
 			task.Date = nextDate
 		} else {
@@ -151,14 +110,14 @@ func (d *Datab) AddTask(task Task) (string, error) {
 		}
 	}
 	if task.Title == "" {
-		return "", fmt.Errorf(`{"error":"Не указан заголовок задачи"}`)
+		return "", fmt.Errorf("не указан заголовок задачи")
 	}
 
 	// Добавляем задачу в базу данных
-	query := `INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)`
+	query := `INSERT INTO scheduler (date, title, comment, repeat) VALUES ($1, $2, $3, $4)`
 	res, err := d.db.Exec(query, task.Date, task.Title, task.Comment, task.Repeat)
 	if err != nil {
-		return "", fmt.Errorf(`{"error":"Задача не добавлена"}`)
+		return "", fmt.Errorf("задача не добавлена")
 	}
 
 	//  Идентификатор созданной задачи
@@ -172,8 +131,7 @@ func (d *Datab) AddTask(task Task) (string, error) {
 
 // Получаем список ближайших задач
 func (d *Datab) GetTasks(search string) ([]Task, error) {
-	var task Task
-	var tasks []Task
+
 	var rows *sql.Rows
 	var err error
 
@@ -203,22 +161,27 @@ func (d *Datab) GetTasks(search string) ([]Task, error) {
 			sql.Named("limit", LimitTasks),
 		)
 	}
-
 	if err != nil {
 		log.Println("задачу не найти", err)
 		return nil, err
 	}
-
 	defer rows.Close()
+
+	var tasks []Task
+
 	for rows.Next() {
+		task := Task{}
 		err := rows.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
-		if err = rows.Err(); err != nil {
-			return []Task{}, fmt.Errorf(`{"error":"Ошибка распознавания данных"}`)
+		if err != nil {
+			return nil, err
 		}
 		tasks = append(tasks, task)
 	}
 	if len(tasks) == 0 {
 		tasks = []Task{}
+	}
+	if rows.Err() != nil {
+		return nil, rows.Err()
 	}
 
 	return tasks, nil
@@ -255,10 +218,9 @@ func (d *Datab) UpdateTask(task Task) error {
 	// Если дата меньше time.Now, то устанавливаем NextDate
 	if task.Date < time.Now().Format(DateFormat) {
 		if task.Repeat != "" {
-			nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
+			nextDate, err := nextdate.NextDate(time.Now(), task.Date, task.Repeat)
 			if err != nil {
-
-				return fmt.Errorf("некорректное правило повторения")
+				return fmt.Errorf("неверное правило повторения")
 			}
 			task.Date = nextDate
 		} else {
@@ -269,31 +231,28 @@ func (d *Datab) UpdateTask(task Task) error {
 	if task.Title == "" {
 		return fmt.Errorf("не указан заголовок задачи")
 	}
-
-	// Обновляем задачу в базе
+	/// что-то не так
+	// Обновляем задачу в базе данных
 	query := `UPDATE scheduler SET date=?, title=?, comment=?, repeat=? WHERE id=?`
 	res, err := d.db.Exec(query, task.Date, task.Title, task.Comment, task.Repeat, task.ID)
 	if err != nil {
-
-		return fmt.Errorf("задача с таким id не найдена")
+		return fmt.Errorf("ошибка в обновлении данных")
 	}
-
-	rowsAffected, err := res.RowsAffected() // определяем измененные строки
+	rowsTouched, err := res.RowsAffected()
 	if err != nil {
-
 		return fmt.Errorf("не удалось посчитать измененные строки")
 	}
-
-	if rowsAffected == 0 {
-
+	if rowsTouched == 0 {
 		return fmt.Errorf("задача с таким id не найдена")
 	}
+
+	log.Println("задача изменена")
 
 	return nil
 }
 
 // Выполнение задачи
-func (d *Datab) TaskDone(id string) error {
+func (d *Datab) DoneTask(id string) error {
 	var task Task
 
 	task, err := d.GetTask(id)
@@ -309,7 +268,7 @@ func (d *Datab) TaskDone(id string) error {
 		}
 
 	} else {
-		next, err := NextDate(time.Now(), task.Date, task.Repeat) // расчет следующей даты
+		next, err := nextdate.NextDate(time.Now(), task.Date, task.Repeat) // расчет следующей даты
 		if err != nil {
 			return err
 		}
@@ -328,20 +287,18 @@ func (d *Datab) DeleteTask(id string) error {
 	if id == "" {
 		return fmt.Errorf("не указан id")
 	}
-
 	query := "DELETE FROM scheduler WHERE id = ?"
 	res, err := d.db.Exec(query, id)
 	if err != nil {
 		return fmt.Errorf("не удалось удалить задачу")
 	}
 
-	rowsAffected, err := res.RowsAffected() // определяем измененные строки
+	rowsTouched, err := res.RowsAffected() // определяем измененные строки
 	if err != nil {
 		return fmt.Errorf("не удалось посчитать измененные строки")
-
 	}
-	if rowsAffected == 0 {
 
+	if rowsTouched == 0 {
 		return fmt.Errorf("задача с таким id не найдена")
 	}
 	return nil
