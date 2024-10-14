@@ -10,7 +10,7 @@ import (
 
 // chFile
 // обработчик "/api/nextdate"
-func nextDateHandler(w http.ResponseWriter, req *http.Request) {
+func NextDateHandler(w http.ResponseWriter, req *http.Request) {
 	now := req.FormValue("now")
 	date := req.FormValue("date")
 	repeat := req.FormValue("repeat")

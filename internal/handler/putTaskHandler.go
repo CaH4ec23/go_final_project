@@ -10,7 +10,7 @@ import (
 
 // chFile
 // обработчик PUT для "/api/task"
-func putTaskHandler(datab cases.Datab) http.HandlerFunc {
+func PutTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var task cases.Task
 		err := json.NewDecoder(req.Body).Decode(&task)

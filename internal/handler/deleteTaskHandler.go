@@ -11,7 +11,7 @@ import (
 
 // chFile
 // обработчик DELETE для "/api/task"
-func deleteTaskHandler(datab cases.Datab) http.HandlerFunc {
+func DeleteTaskHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		id := req.URL.Query().Get("id")
 		err := datab.DeleteTask(id)

@@ -11,7 +11,7 @@ import (
 
 // chFile
 // обработчик GET для "/api/tasks"
-func getTasksHandler(datab cases.Datab) http.HandlerFunc {
+func GetTasksHandler(datab cases.Datab) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		taskSearch := req.URL.Query().Get("search")
 		tasks, err := datab.GetTasks(taskSearch)
