@@ -1,15 +1,15 @@
 package main
 
 import (
-	"go_final_project/internal/handler"
-	cases "go_final_project/internal/tasks"
+	"net/http"
 	"os"
 	"strings"
 
-	"net/http"
-
 	"github.com/go-chi/chi"
 	_ "modernc.org/sqlite"
+
+	"go_final_project/internal/handler"
+	cases "go_final_project/internal/tasks"
 )
 
 func main() {
