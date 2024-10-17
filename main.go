@@ -1,62 +1,70 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
-	"strings"
+	"path/filepath"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
+	"github.com/joho/godotenv"
 	_ "modernc.org/sqlite"
 
-	"go_final_project/internal/handler"
-	cases "go_final_project/internal/tasks"
+	"github.com/CaH4ec23/go_final_project/database"
+	"github.com/CaH4ec23/go_final_project/handlers"
 )
 
 func main() {
-	db := cases.CreatDb()
+	errEnv := godotenv.Load()
+	if errEnv != nil {
+		log.Fatal("Ошибка при загрузке .env file")
+	}
+	PORT := os.Getenv("TODO_PORT")
+	DBFILE := os.Getenv("TODO_DBFILE")
+
+	db, err := sql.Open("sqlite", DBFILE)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	defer db.Close()
-	datab := cases.NewDatab(db)
 
-	port := "7540"
-	envPort := os.Getenv("TODO_PORT")
-	if len(envPort) != 0 {
-		port = envPort
+	appPath, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	r := chi.NewRouter()
-	FileServer(r, "/", http.Dir("./web"))
+	dbFile := filepath.Join(appPath, DBFILE)
+	_, err = os.Stat(dbFile)
 
-	// обработчики:
-	r.HandleFunc("/api/nextdate", handler.NextDateHandler)
-	r.Post("/api/task", handler.PostTaskHandler(datab))
-	r.Get("/api/tasks", handler.GetTasksHandler(datab))
-	r.Get("/api/task", handler.GetTaskHandler(datab))
-	r.Put("/api/task", handler.PutTaskHandler(datab))
-	r.Post("/api/task/done", handler.DoneTaskHandler(datab))
-	r.Delete("/api/task", handler.DeleteTaskHandler(datab))
-	// запускаем сервер
-	if err := http.ListenAndServe(":"+port, r); err != nil {
-		panic(err)
+	var install bool
 
+	if err != nil {
+		install = true
 	}
 
-}
-
-func FileServer(r chi.Router, path string, root http.FileSystem) {
-	if strings.ContainsAny(path, "{}*") {
-		panic("FileServer does not permit any URL parameters.")
+	if install {
+		database.CreateDB(db)
+	} else {
+		fmt.Println("База данных уже существует")
 	}
 
-	if path != "/" && path[len(path)-1] != '/' {
-		r.Get(path, http.RedirectHandler(path+"/", 301).ServeHTTP)
-		path += "/"
-	}
-	path += "*"
+	router := chi.NewRouter()
 
-	r.Get(path, func(w http.ResponseWriter, req *http.Request) {
-		rctx := chi.RouteContext(req.Context())
-		pathPrefix := strings.TrimSuffix(rctx.RoutePattern(), "/*")
-		fs := http.StripPrefix(pathPrefix, http.FileServer(root))
-		fs.ServeHTTP(w, req)
-	})
+	router.Get("/*", handlers.GetStatic)
+	router.Get("/api/nextdate", handlers.GetNextDate)
+	router.Get("/api/tasks", func(w http.ResponseWriter, req *http.Request) { handlers.GetTasks(w, req, db) })
+	router.Get("/api/task", func(w http.ResponseWriter, req *http.Request) { handlers.GetTask(w, req, db) })
+	router.Put("/api/task", func(w http.ResponseWriter, req *http.Request) { handlers.UpdateTask(w, req, db) })
+	router.Post("/api/task", func(w http.ResponseWriter, req *http.Request) { handlers.AddTask(w, req, db) })
+	router.Post("/api/task/done", func(w http.ResponseWriter, req *http.Request) { handlers.DoneTask(w, req, db) })
+	router.Delete("/api/task", func(w http.ResponseWriter, req *http.Request) { handlers.DeleteTask(w, req, db) })
+
+	fmt.Println("Сервер прослушивает порт", PORT)
+	if err := http.ListenAndServe(PORT, router); err != nil {
+		fmt.Printf("Ошибка при запуске сервера: %s", err.Error())
+		return
+	}
 }
